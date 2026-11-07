@@ -1,0 +1,2 @@
+apk-distribution/*.apk binary
+apk-distribution/*.sha256 text

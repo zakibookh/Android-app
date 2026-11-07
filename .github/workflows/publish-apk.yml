@@ -1,0 +1,110 @@
+name: Publish Android APK Release
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  publish-release:
+    name: Publish Pre-Compiled Debug APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Check APK Presence
+        id: check_apk
+        run: |
+          if [ -f "apk-distribution/app-debug.apk" ] && [ -s "apk-distribution/app-debug.apk" ]; then
+            echo "apk_exists=true" >> $GITHUB_OUTPUT
+            echo "Found pre-compiled APK in apk-distribution/"
+          else
+            echo "apk_exists=false" >> $GITHUB_OUTPUT
+            echo "Pre-compiled APK binary not present in git checkout, setting up Android build toolchain..."
+          fi
+
+      - name: Set up Java 17
+        if: steps.check_apk.outputs.apk_exists != 'true'
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Set up Android SDK
+        if: steps.check_apk.outputs.apk_exists != 'true'
+        uses: android-actions/setup-android@v3
+
+      - name: Set up Gradle
+        if: steps.check_apk.outputs.apk_exists != 'true'
+        uses: gradle/actions/setup-gradle@v3
+
+      - name: Compile Debug APK
+        if: steps.check_apk.outputs.apk_exists != 'true'
+        run: |
+          mkdir -p apk-distribution
+          gradle :app:assembleDebug --no-daemon
+          cp app/build/outputs/apk/debug/app-debug.apk apk-distribution/app-debug.apk
+          cd apk-distribution && sha256sum app-debug.apk > app-debug.apk.sha256
+
+      - name: Validate APK and Checksum
+        id: validate
+        run: |
+          echo "Checking APK existence and checksum..."
+          if [ ! -f "apk-distribution/app-debug.apk" ]; then
+            echo "Error: apk-distribution/app-debug.apk does not exist."
+            exit 1
+          fi
+
+          if [ ! -s "apk-distribution/app-debug.apk" ]; then
+            echo "Error: apk-distribution/app-debug.apk is empty."
+            exit 1
+          fi
+
+          unzip -tq apk-distribution/app-debug.apk
+
+          ACTUAL_HASH=$(sha256sum apk-distribution/app-debug.apk | awk '{print $1}')
+          echo "$ACTUAL_HASH  app-debug.apk" > apk-distribution/app-debug.apk.sha256
+
+          APK_SIZE_BYTES=$(stat -c%s "apk-distribution/app-debug.apk")
+          APK_SIZE_MB=$(echo "scale=2; $APK_SIZE_BYTES / 1048576" | bc)
+
+          echo "apk_hash=$ACTUAL_HASH" >> $GITHUB_OUTPUT
+          echo "apk_size=$APK_SIZE_MB MB ($APK_SIZE_BYTES bytes)" >> $GITHUB_OUTPUT
+          echo "Validation succeeded!"
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_NAME: "debug-apk-build-${{ github.run_number }}-${{ github.run_attempt }}"
+        run: |
+          echo "Publishing GitHub Release $TAG_NAME..."
+          
+          gh release create "$TAG_NAME" "apk-distribution/app-debug.apk" \
+            --title "SmartBoard AI Debug APK ($TAG_NAME)" \
+            --notes "Android Debug APK built for SmartBoard AI. Verified SHA-256: \`${{ steps.validate.outputs.apk_hash }}\`" \
+            --latest \
+            --prerelease=false
+
+          echo "Release published successfully!"
+
+      - name: Generate Job Summary
+        if: always()
+        run: |
+          TAG_NAME="debug-apk-build-${{ github.run_number }}-${{ github.run_attempt }}"
+          REPO="${{ github.repository }}"
+          
+          cat <<EOF >> $GITHUB_STEP_SUMMARY
+          ### 📱 SmartBoard AI Debug APK Release Published
+          - **Release Tag:** \`$TAG_NAME\`
+          - **APK Size:** ${{ steps.validate.outputs.apk_size }}
+          - **SHA-256 Checksum:** \`${{ steps.validate.outputs.apk_hash }}\`
+          - **GitHub Release Page:** https://github.com/$REPO/releases/tag/$TAG_NAME
+          - **Direct Latest APK Download URL:** https://github.com/$REPO/releases/latest/download/app-debug.apk
+          EOF

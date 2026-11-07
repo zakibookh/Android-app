@@ -1,0 +1,6 @@
+{
+  "name": "SmartBoard AI",
+  "description": "Professional Smart AI Digital Whiteboard for teachers and students with real-time handwriting recognition, math typesetting, shape recognition, and AI math assistant.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
